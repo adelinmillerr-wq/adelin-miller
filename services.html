@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Услуги — Adelin Miller</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --pink: #f093fb;
+  --red: #f5576c;
+  --grad: linear-gradient(135deg, #f093fb, #f5576c);
+  --dark: #08080f;
+  --dark2: #0d0d1a;
+  --dark3: #12121f;
+  --border: #1a1a2e;
+  --text: #e8e8ff;
+  --muted: #555570;
+}
+html { scroll-behavior: smooth; overflow-x: hidden; }
+body {
+  background: var(--dark);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  overflow-x: hidden;
+  line-height: 1.6;
+}
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none; z-index: 0; opacity: 0.4;
+}
+.glow { position: fixed; top: -200px; left: 50%; transform: translateX(-50%); width: 700px; height: 600px; border-radius: 50%; background: radial-gradient(ellipse, rgba(240,147,251,0.07) 0%, transparent 70%); pointer-events: none; z-index: 0; }
+canvas#neural-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: 0.35; }
+
+/* NAV */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(8,8,15,0.92); backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 52px;
+}
+.topbar-logo {
+  font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 3px;
+  background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  text-decoration: none;
+}
+.topbar-back {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--muted); text-decoration: none;
+  transition: color 0.25s;
+}
+.topbar-back:hover { color: var(--pink); }
+.topbar-back span { font-size: 16px; }
+
+/* WRAPPER */
+.wrapper {
+  position: relative; z-index: 1;
+  max-width: 460px; width: 100%; margin: 0 auto;
+  padding: 80px 20px 80px;
+}
+
+/* HERO */
+.hero {
+  text-align: center; margin-bottom: 48px;
+  opacity: 0; animation: fadeUp 0.8s ease 0.1s forwards;
+}
+.hero-tag {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--dark3); border: 1px solid var(--border);
+  border-radius: 999px; padding: 5px 14px; margin-bottom: 20px;
+  font-size: 10px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase;
+}
+.hero-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--grad); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
+.hero h1 {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 52px; letter-spacing: 4px; line-height: 1;
+  margin-bottom: 8px;
+}
+.hero h1 span {
+  background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.hero-sub {
+  font-family: 'Cormorant Garamond', serif; font-style: italic;
+  font-size: 16px; color: var(--muted); letter-spacing: 2px;
+  margin-bottom: 16px;
+}
+.hero-desc { font-size: 14px; color: var(--muted); line-height: 1.7; max-width: 340px; margin: 0 auto; }
+
+/* SECTION LABEL */
+.section-label {
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; margin-bottom: 16px;
+  opacity: 0; animation: fadeUp 0.8s ease var(--delay, 0.3s) forwards;
+}
+.section-label span { font-size: 10px; letter-spacing: 4px; text-transform: uppercase; color: var(--muted); white-space: nowrap; font-weight: 500; }
+.section-label::before, .section-label::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--border) 60%, transparent); }
+
+/* SERVICE CARD */
+.service-block { width: 100%; margin-bottom: 36px; }
+
+.service-card {
+  background: var(--dark2); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden; margin-bottom: 14px;
+  position: relative;
+  opacity: 0; animation: fadeUp 0.7s ease var(--delay, 0.3s) forwards;
+  transition: border-color 0.3s, transform 0.3s;
+}
+.service-card:hover { border-color: rgba(240,147,251,0.3); transform: translateY(-2px); }
+.service-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--grad); opacity: 0; transition: opacity 0.3s;
+}
+.service-card:hover::before { opacity: 1; }
+
+.service-header {
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: flex-start; gap: 14px;
+}
+.service-icon {
+  width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
+  background: rgba(240,147,251,0.08); border: 1px solid rgba(240,147,251,0.15);
+  display: flex; align-items: center; justify-content: center; font-size: 20px;
+}
+.service-title {
+  font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1.5px;
+  line-height: 1.1; margin-bottom: 5px;
+}
+.service-desc { font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+.service-body { padding: 16px 20px; }
+
+/* PRICE ROW */
+.price-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.price-row:last-child { border-bottom: none; }
+.price-label { font-size: 13px; color: var(--text); }
+.price-label small { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; }
+.price-val {
+  font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px;
+  background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  white-space: nowrap;
+}
+
+/* PHOTO PACKAGES */
+.photo-packages { display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; }
+.pkg {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--dark3);
+  transition: border-color 0.25s;
+  position: relative; overflow: hidden;
+}
+.pkg:hover { border-color: rgba(240,147,251,0.3); }
+.pkg.popular {
+  border-color: rgba(240,147,251,0.4);
+  background: rgba(240,147,251,0.04);
+}
+.popular-badge {
+  position: absolute; top: 0; right: 12px;
+  font-size: 8px; letter-spacing: 2px; text-transform: uppercase;
+  background: var(--grad); color: #fff; padding: 3px 8px;
+  border-radius: 0 0 6px 6px; font-weight: 700;
+}
+.pkg-left { }
+.pkg-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.pkg-detail { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.pkg-right { text-align: right; }
+.pkg-price {
+  font-family: 'Bebas Neue', sans-serif; font-size: 22px;
+  background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.pkg-old { font-size: 10px; color: var(--muted); text-decoration: line-through; }
+
+/* VIDEO CALC */
+.video-calc {
+  padding: 16px 20px;
+  background: var(--dark3); border-radius: 6px; margin: 0 20px 16px;
+  border: 1px solid var(--border);
+}
+.calc-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+.calc-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.calc-row:last-child { margin-bottom: 0; padding-top: 10px; border-top: 1px solid var(--border); }
+.calc-label { font-size: 12px; color: var(--muted); }
+.calc-val { font-size: 13px; color: var(--text); font-weight: 500; }
+.calc-val.accent {
+  font-family: 'Bebas Neue', sans-serif; font-size: 20px;
+  background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+
+/* CTA BUTTON */
+.service-cta {
+  display: block; text-align: center; text-decoration: none;
+  background: var(--grad); color: #fff;
+  font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700;
+  padding: 13px; border-radius: 999px; margin: 0 20px 20px;
+  letter-spacing: 1px; text-transform: uppercase;
+  transition: opacity 0.2s, transform 0.2s;
+  box-shadow: 0 6px 24px rgba(245,87,108,0.25);
+}
+.service-cta:hover { opacity: 0.88; transform: translateY(-1px); }
+
+/* BOTTOM CTA */
+.bottom-cta {
+  text-align: center; padding: 32px 24px;
+  background: var(--dark2); border: 1px solid var(--border);
+  border-radius: 8px; margin-bottom: 40px;
+  opacity: 0; animation: fadeUp 0.8s ease 1s forwards;
+  position: relative; overflow: hidden;
+}
+.bottom-cta::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--grad);
+}
+.bottom-cta h3 {
+  font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+.bottom-cta p { font-size: 13px; color: var(--muted); margin-bottom: 20px; line-height: 1.6; }
+.bottom-cta a {
+  display: inline-block; background: var(--grad); color: #fff;
+  font-size: 13px; font-weight: 700; padding: 13px 32px;
+  border-radius: 999px; text-decoration: none; letter-spacing: 1px; text-transform: uppercase;
+  transition: opacity 0.2s, transform 0.2s;
+  box-shadow: 0 6px 24px rgba(245,87,108,0.25);
+}
+.bottom-cta a:hover { opacity: 0.88; transform: translateY(-1px); }
+
+/* FOOTER */
+.foot {
+  text-align: center; padding-top: 20px;
+  font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); opacity: 0.5;
+}
+
+/* REVEAL */
+.reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.7s ease, transform 0.7s ease; }
+.reveal.visible { opacity: 1; transform: translateY(0); }
+.reveal.delay-1 { transition-delay: 0.1s; }
+.reveal.delay-2 { transition-delay: 0.2s; }
+.reveal.delay-3 { transition-delay: 0.3s; }
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 480px) { .hero h1 { font-size: 40px; } }
+</style>
+</head>
+<body>
+
+<canvas id="neural-bg"></canvas>
+<div class="glow"></div>
+
+<div class="topbar">
+  <a href="index.html" class="topbar-back"><span>←</span> На главную</a>
+  <a href="portfolio.html" style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#555570;text-decoration:none;transition:color 0.25s;" onmouseover="this.style.color='#f093fb'" onmouseout="this.style.color='#555570'">Портфолио</a>
+  <a href="index.html" class="topbar-logo">Adelin Miller</a>
+</div>
+
+<div class="wrapper">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-tag"><div class="hero-dot"></div> Услуги</div>
+    <h1>МОИ <span>УСЛУГИ</span></h1>
+    <div class="hero-sub">by Adelin Miller</div>
+    <div class="hero-desc">Создаю цифровые продукты с помощью AI — быстро, красиво и по делу</div>
+  </div>
+
+  <!-- САЙТЫ -->
+  <div class="section-label reveal" style="--delay:0.2s"><span>Сайты</span></div>
+  <div class="service-block">
+
+    <div class="service-card reveal delay-1" style="--delay:0.25s">
+      <div class="service-header">
+        <div class="service-icon">🌐</div>
+        <div>
+          <div class="service-title">Создание сайта</div>
+          <div class="service-desc">Одностраничные лендинги, сайты-визитки и информационные сайты для бизнеса. С доменом и настройкой.</div>
+        </div>
+      </div>
+      <div class="service-body">
+        <div class="price-row">
+          <div class="price-label">Разработка сайта<small>Лендинг / визитка / бизнес</small></div>
+          <div class="price-val">от 10 000 ₽</div>
+        </div>
+        <div class="price-row">
+          <div class="price-label">Сопровождение 3 месяца<small>Правки, обновления, поддержка</small></div>
+          <div class="price-val">5 000 ₽</div>
+        </div>
+      </div>
+      <a href="https://t.me/adelin_miller" target="_blank" class="service-cta">Обсудить проект</a>
+    </div>
+
+  </div>
+
+  <!-- НЕЙРОФОТО -->
+  <div class="section-label reveal" style="--delay:0.3s"><span>AI-Фотосессии</span></div>
+  <div class="service-block">
+
+    <div class="service-card reveal delay-1" style="--delay:0.35s">
+      <div class="service-header">
+        <div class="service-icon">✨</div>
+        <div>
+          <div class="service-title">Нейрофотосессия</div>
+          <div class="service-desc">Реалистичные AI-фото, которые не отличить от настоящих. 2 правки бесплатно к каждому фото.</div>
+        </div>
+      </div>
+      <div class="photo-packages">
+
+        <div class="pkg">
+          <div class="pkg-left">
+            <div class="pkg-name">Старт</div>
+            <div class="pkg-detail">3 фото · 2 правки к каждому</div>
+          </div>
+          <div class="pkg-right">
+            <div class="pkg-price">3 000 ₽</div>
+          </div>
+        </div>
+
+        <div class="pkg popular">
+          <div class="popular-badge">Популярный</div>
+          <div class="pkg-left">
+            <div class="pkg-name">Базовый</div>
+            <div class="pkg-detail">8 фото · 2 правки к каждому</div>
+          </div>
+          <div class="pkg-right">
+            <div class="pkg-price">6 500 ₽</div>
+            <div class="pkg-old">8 000 ₽</div>
+          </div>
+        </div>
+
+        <div class="pkg">
+          <div class="pkg-left">
+            <div class="pkg-name">Премиум</div>
+            <div class="pkg-detail">12 фото · 2 правки к каждому</div>
+          </div>
+          <div class="pkg-right">
+            <div class="pkg-price">10 000 ₽</div>
+            <div class="pkg-old">12 000 ₽</div>
+          </div>
+        </div>
+
+        <div class="pkg">
+          <div class="pkg-left">
+            <div class="pkg-name">1 фото</div>
+            <div class="pkg-detail">Одиночный заказ · 2 правки</div>
+          </div>
+          <div class="pkg-right">
+            <div class="pkg-price">1 000 ₽</div>
+          </div>
+        </div>
+
+      </div>
+      <a href="https://t.me/adelin_miller" target="_blank" class="service-cta">Заказать фотосессию</a>
+    </div>
+
+  </div>
+
+  <!-- ВИДЕО -->
+  <div class="section-label reveal" style="--delay:0.35s"><span>AI-Видео</span></div>
+  <div class="service-block">
+
+    <div class="service-card reveal delay-1" style="--delay:0.4s">
+      <div class="service-header">
+        <div class="service-icon">🎬</div>
+        <div>
+          <div class="service-title">AI-Видео</div>
+          <div class="service-desc">Рекламные ролики, музыкальные клипы, синематики и трейлеры. Цена за кадр — 2.5 секунды видео.</div>
+        </div>
+      </div>
+      <div class="video-calc">
+        <div class="calc-title">Примеры расчёта</div>
+        <div class="calc-row">
+          <div class="calc-label">1 кадр (2.5 сек)</div>
+          <div class="calc-val">от 3 000 ₽</div>
+        </div>
+        <div class="calc-row">
+          <div class="calc-label">15 сек ролик (~6 кадров)</div>
+          <div class="calc-val">от 18 000 ₽</div>
+        </div>
+        <div class="calc-row">
+          <div class="calc-label">30 сек ролик (~12 кадров)</div>
+          <div class="calc-val">от 36 000 ₽</div>
+        </div>
+        <div class="calc-row">
+          <div class="calc-label">Итоговая цена</div>
+          <div class="calc-val accent">Индивидуально</div>
+        </div>
+      </div>
+      <div class="service-body">
+        <div class="price-row">
+          <div class="price-label">Рекламный ролик<small>Продукт, бренд, услуга</small></div>
+          <div class="price-val">по запросу</div>
+        </div>
+        <div class="price-row">
+          <div class="price-label">Музыкальный клип<small>Синематик, трейлер</small></div>
+          <div class="price-val">по запросу</div>
+        </div>
+      </div>
+      <a href="https://t.me/adelin_miller" target="_blank" class="service-cta">Обсудить видео</a>
+    </div>
+
+  </div>
+
+  <!-- МИНИ-АПП -->
+  <div class="section-label reveal" style="--delay:0.4s"><span>Telegram Mini App</span></div>
+  <div class="service-block">
+
+    <div class="service-card reveal delay-1" style="--delay:0.45s">
+      <div class="service-header">
+        <div class="service-icon">⚡</div>
+        <div>
+          <div class="service-title">Мини-приложение</div>
+          <div class="service-desc">Разработка приложений внутри Telegram для бизнеса. Подключение к боту, каталоги, онбординг, обучение.</div>
+        </div>
+      </div>
+      <div class="service-body">
+        <div class="price-row">
+          <div class="price-label">Разработка Mini App<small>Дизайн + вёрстка + подключение к боту</small></div>
+          <div class="price-val">от 6 500 ₽</div>
+        </div>
+        <div class="price-row">
+          <div class="price-label">Цена зависит от<small>Функционала и сложности проекта</small></div>
+          <div class="price-val" style="font-size:13px;font-family:'DM Sans',sans-serif;font-weight:600;background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">обсуждаем<br>индивидуально</div>
+        </div>
+      </div>
+      <a href="https://t.me/adelin_miller" target="_blank" class="service-cta">Обсудить проект</a>
+    </div>
+
+  </div>
+
+
+
+  <div class="section-label reveal" style="--delay:0.55s"><span>Предметная съёмка</span></div>
+  <div class="service-block">
+    <div class="service-card reveal delay-1" style="--delay:0.6s">
+      <div class="service-header">
+        <div class="service-icon">📦</div>
+        <div>
+          <div class="service-title">AI-предметная съёмка</div>
+          <div class="service-desc">Реалистичные фото товаров с любым фоном, атмосферой и стилем. Косметика, парфюмерия, напитки, одежда — всё выглядит как профессиональная студийная съёмка.</div>
+        </div>
+      </div>
+      <div class="service-body">
+        <div class="price-row">
+          <div class="price-label">1 фото товара<small>Простой фон, базовый свет</small></div>
+          <div class="price-val">от 1 500 ₽</div>
+        </div>
+        <div class="price-row">
+          <div class="price-label">Рекламный кадр<small>Сложная сцена, атмосфера, текст</small></div>
+          <div class="price-val">от 3 000 ₽</div>
+        </div>
+        <div class="price-row">
+          <div class="price-label">Пакет 10 фото<small>Серия для маркетплейса или соцсетей</small></div>
+          <div class="price-val">от 12 000 ₽</div>
+        </div>
+      </div>
+      <a href="https://t.me/adelin_miller" target="_blank" class="service-cta">Заказать съёмку</a>
+    </div>
+  </div>
+
+  <!-- PORTFOLIO BTN -->
+  <div style="width:100%;margin-bottom:24px;opacity:0;animation:fadeUp 0.8s ease 0.95s forwards;">
+    <a href="portfolio.html" style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:15px 24px;border-radius:999px;text-decoration:none;border:1px solid rgba(240,147,251,0.3);color:#e8e8ff;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;letter-spacing:1px;text-transform:uppercase;transition:all 0.3s;background:rgba(240,147,251,0.05);" onmouseover="this.style.borderColor='rgba(240,147,251,0.6)';this.style.background='rgba(240,147,251,0.1)'" onmouseout="this.style.borderColor='rgba(240,147,251,0.3)';this.style.background='rgba(240,147,251,0.05)'">
+      ✦ Смотреть портфолио
+    </a>
+  </div>
+
+  <!-- BOTTOM CTA -->
+  <div class="bottom-cta">
+    <h3>Есть проект? <span style="background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Давай обсудим</span></h3>
+    <p>Напиши мне в Telegram — разберём задачу, обсудим сроки и стоимость. Отвечаю быстро 🤍</p>
+    <a href="https://t.me/adelin_miller" target="_blank">Написать в Telegram</a>
+  </div>
+
+  <div class="foot">© Adelin Miller</div>
+
+</div>
+
+<script>
+// Stars animation
+(function() {
+  const canvas = document.getElementById('neural-bg');
+  const ctx = canvas.getContext('2d');
+  let W, H, stars, animFrame;
+  const COLORS = ['rgba(240,147,251,','rgba(245,87,108,','rgba(180,100,240,','rgba(255,180,220,','rgba(255,255,255,'];
+  function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+  function initStars() {
+    const count = Math.min(Math.floor((W * H) / 6000), 160);
+    stars = [];
+    for (let i = 0; i < count; i++) {
+      stars.push({
+        x: Math.random() * W, y: Math.random() * H,
+        r: Math.random() * 1.2 + 0.2,
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        alpha: Math.random(), speed: Math.random() * 0.15 + 0.03,
+        twinkle: Math.random() * Math.PI * 2,
+        twinkleSpeed: 0.01 + Math.random() * 0.03,
+        sparkle: Math.random() > 0.75,
+      });
+    }
+  }
+  function drawSparkle(x, y, r, alpha, color) {
+    ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y);
+    for (let i = 0; i < 4; i++) {
+      ctx.save(); ctx.rotate((i * Math.PI) / 2);
+      ctx.beginPath(); ctx.moveTo(0, -r*3); ctx.quadraticCurveTo(r*0.3,-r*0.3,0,0); ctx.quadraticCurveTo(-r*0.3,-r*0.3,0,-r*3);
+      ctx.fillStyle = color+alpha+')'; ctx.fill(); ctx.restore();
+    }
+    const grad = ctx.createRadialGradient(0,0,0,0,0,r*2);
+    grad.addColorStop(0, color+(alpha*0.9)+')'); grad.addColorStop(1, color+'0)');
+    ctx.beginPath(); ctx.arc(0,0,r*2,0,Math.PI*2); ctx.fillStyle=grad; ctx.fill();
+    ctx.restore();
+  }
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    stars.forEach(s => {
+      s.twinkle += s.twinkleSpeed;
+      const glow = 0.3 + 0.7*Math.abs(Math.sin(s.twinkle));
+      if (s.sparkle) {
+        drawSparkle(s.x, s.y, s.r, glow*0.7, s.color);
+      } else {
+        const grad = ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r*3);
+        grad.addColorStop(0, s.color+(glow*0.8)+')'); grad.addColorStop(1, s.color+'0)');
+        ctx.beginPath(); ctx.arc(s.x,s.y,s.r*3,0,Math.PI*2); ctx.fillStyle=grad; ctx.fill();
+        ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fillStyle=s.color+glow+')'; ctx.fill();
+      }
+      s.y -= s.speed; s.x += Math.sin(s.twinkle*0.3)*0.2;
+      if (s.y < -10) { s.y = H+10; s.x = Math.random()*W; }
+    });
+    animFrame = requestAnimationFrame(draw);
+  }
+  resize(); initStars(); draw();
+  window.addEventListener('resize', () => { cancelAnimationFrame(animFrame); resize(); initStars(); draw(); });
+})();
+
+// Scroll reveal
+const revealEls = document.querySelectorAll('.reveal');
+const obs = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); obs.unobserve(e.target); } });
+}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+revealEls.forEach(el => obs.observe(el));
+</script>
+</body>
+</html>
