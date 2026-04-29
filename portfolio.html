@@ -6,7 +6,6 @@
 <title>Портфолио — Adelin Miller</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Cormorant+Garamond:ital,wght@0,400;1,400&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-/* Сохраняю все ваши оригинальные стили */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
   --pink: #f093fb; --red: #f5576c;
@@ -16,8 +15,12 @@
 }
 html { scroll-behavior: smooth; overflow-x: hidden; }
 body { background: var(--dark); color: var(--text); font-family: 'DM Sans', sans-serif; overflow-x: hidden; }
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% -20%, rgba(240,147,251,0.15) 0%, transparent 50%);
+  z-index: 0;
+}
 
-/* Ваши оригинальные блоки дизайна */
 .nav { position: fixed; top: 0; width: 100%; height: 80px; display: flex; align-items: center; justify-content: space-between; padding: 0 5%; background: rgba(8,8,15,0.8); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); z-index: 1000; }
 .nav-logo { font-family: 'Bebas Neue', sans-serif; font-size: 2rem; background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-decoration: none; }
 .nav-links { display: flex; gap: 30px; }
@@ -28,21 +31,21 @@ body { background: var(--dark); color: var(--text); font-family: 'DM Sans', sans
 .hero h1 { font-family: 'Bebas Neue', sans-serif; font-size: clamp(4rem, 12vw, 8rem); line-height: 0.9; margin-bottom: 20px; background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 
 .portfolio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 30px; padding: 0 5% 80px; max-width: 1400px; margin: 0 auto; position: relative; z-index: 10; }
-.work-card { background: var(--dark2); border: 1px solid var(--border); border-radius: 24px; overflow: hidden; transition: 0.5s cubic-bezier(0.23,1,0.32,1); }
-.work-card:hover { border-color: var(--pink); transform: translateY(-10px); }
+.work-card { background: var(--dark2); border: 1px solid var(--border); border-radius: 24px; overflow: hidden; transition: 0.5s cubic-bezier(0.23,1,0.32,1); position: relative; }
+.work-card:hover { border-color: var(--pink); transform: translateY(-10px); box-shadow: 0 20px 40px rgba(0,0,0,0.4), 0 0 20px rgba(240,147,251,0.1); }
 .work-media { width: 100%; aspect-ratio: 16/9; position: relative; background: #000; overflow: hidden; }
-.work-media video, .work-media img { width: 100%; height: 100%; object-fit: cover; }
-.work-info { padding: 25px; }
-.work-info h3 { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; margin-bottom: 10px; }
-.work-info p { font-size: 0.9rem; opacity: 0.5; }
+.work-media video, .work-media img { width: 100%; height: 100%; object-fit: cover; transition: 0.6s; }
+.work-card:hover .work-media video, .work-card:hover .work-media img { transform: scale(1.05); }
+.work-info { padding: 25px; background: linear-gradient(to bottom, transparent, rgba(13,13,26,0.5)); }
+.work-info h3 { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; margin-bottom: 10px; color: #fff; letter-spacing: 1px; }
+.work-info p { font-size: 0.9rem; color: var(--muted); line-height: 1.6; }
 
-/* Стили музыкального блока (совместимые с вашим дизайном) */
+/* Стили для нового блока музыки */
 .music-section { padding: 40px 5% 100px; max-width: 1400px; margin: 0 auto; position: relative; z-index: 10; }
-.section-title { font-family: 'Bebas Neue', sans-serif; font-size: 3rem; margin-bottom: 40px; text-align: center; background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.music-title { font-family: 'Bebas Neue', sans-serif; font-size: 3rem; margin-bottom: 40px; text-align: center; background: var(--grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 .music-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-.music-card { background: var(--dark2); border: 1px solid var(--border); padding: 20px; border-radius: 20px; display: flex; flex-direction: column; gap: 10px; }
-.music-card:hover { border-color: var(--pink); }
-audio { width: 100%; height: 35px; filter: invert(100%) hue-rotate(275deg) brightness(1.5); }
+.music-card { background: var(--dark2); border: 1px solid var(--border); padding: 20px; border-radius: 20px; }
+audio { width: 100%; height: 35px; filter: invert(100%) hue-rotate(275deg) brightness(1.5); margin-top: 10px; }
 
 canvas#stars { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
 </style>
@@ -61,36 +64,45 @@ canvas#stars { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
 </nav>
 
 <header class="hero">
-  <h1>Работы &<br>Проекты</h1>
-  <p style="opacity: 0.6;">Визуальные эффекты, ИИ-генерации и музыкальное сопровождение</p>
+  <h1>Works &<br>Projects</h1>
+  <p style="max-width: 600px; opacity: 0.6; font-size: 1.1rem;">Визуальные эффекты, ИИ-генерации и цифровое искусство</p>
 </header>
 
 <main>
   <section class="portfolio-grid">
     <div class="work-card">
       <div class="work-media">
-        <video src="video-ai-1.mp4" autoplay loop muted playsinline></video>
+        <video src="Vibe_v1.mp4" autoplay loop muted playsinline></video>
       </div>
       <div class="work-info">
-        <h3>ИИ Визуализация</h3>
-        <p>Motion Design / AI Generation</p>
+        <h3>AI Visual Concept</h3>
+        <p>Исследование эстетики через нейронные сети и генеративное искусство.</p>
       </div>
     </div>
 
     <div class="work-card">
       <div class="work-media">
-        <img src="photo-prod-1.jpg" alt="Product Photography">
+        <img src="предмет.jpg" alt="Work">
       </div>
       <div class="work-info">
-        <h3>Предметная фотосъемка</h3>
-        <p>Photography / Editing</p>
+        <h3>Product Design</h3>
+        <p>Предметная фотосъемка и цифровая ретушь высокого уровня.</p>
       </div>
     </div>
-    
-    </section>
+
+    <div class="work-card">
+      <div class="work-media">
+        <video src="AI_Human.mp4" autoplay loop muted playsinline></video>
+      </div>
+      <div class="work-info">
+        <h3>Future Humans</h3>
+        <p>Синтез человеческих образов и технологий будущего.</p>
+      </div>
+    </div>
+  </section>
 
   <section id="music" class="music-section">
-    <h2 class="section-title">Моя Музыка</h2>
+    <h2 class="music-title">Моя Музыка</h2>
     <div class="music-grid">
       <div class="music-card">
         <h3>Серебряные нити</h3>
@@ -109,34 +121,40 @@ canvas#stars { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
 </main>
 
 <script>
-// Ваш скрипт звезд
-const canvas = document.getElementById('stars');
-const ctx = canvas.getContext('2d');
-let W = window.innerWidth, H = window.innerHeight;
-canvas.width = W; canvas.height = H;
-let stars = [];
-for(let i=0; i<150; i++) {
-  stars.push({
-    x: Math.random()*W, y: Math.random()*H,
-    r: Math.random()*1.5+0.5, t: Math.random()*Math.PI*2,
-    ts: 0.02+Math.random()*0.03, color: 'rgba(240,147,251,',
-    vy: 0.05+Math.random()*0.1
-  });
-}
-function draw() {
-  ctx.clearRect(0,0,W,H);
-  stars.forEach(s => {
-    s.t+=s.ts; s.y-=s.vy;
-    if(s.y<-10) s.y=H+10;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
-    ctx.fillStyle = s.color + (0.3 + 0.7*Math.abs(Math.sin(s.t))) + ')';
-    ctx.fill();
-  });
-  requestAnimationFrame(draw);
-}
-draw();
-window.addEventListener('resize', () => { W=window.innerWidth; H=window.innerHeight; canvas.width=W; canvas.height=H; });
+  const canvas = document.getElementById('stars');
+  const ctx = canvas.getContext('2d');
+  let W = window.innerWidth, H = window.innerHeight;
+  canvas.width = W; canvas.height = H;
+  let stars = [];
+  for(let i=0; i<160; i++) {
+    stars.push({
+      x: Math.random()*W, y: Math.random()*H,
+      r: Math.random()*1.2+0.3, t: Math.random()*Math.PI*2,
+      ts: 0.01+Math.random()*0.02, color: 'rgba(240,147,251,',
+      vy: 0.04+Math.random()*0.12, sparkle: Math.random()>0.78
+    });
+  }
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    stars.forEach(s => {
+      s.t+=s.ts; s.y-=s.vy;
+      if(s.y<-8) { s.y=H+8; s.x=Math.random()*W; }
+      const g=0.3+0.7*Math.abs(Math.sin(s.t));
+      if(s.sparkle) {
+        ctx.save(); ctx.globalAlpha=g*0.65; ctx.translate(s.x,s.y);
+        for(let i=0;i<4;i++) { ctx.save(); ctx.rotate(i*Math.PI/2); ctx.beginPath(); ctx.moveTo(0,-s.r*3); ctx.quadraticCurveTo(s.r*0.3,-s.r*0.3,0,0); ctx.quadraticCurveTo(-s.r*0.3,-s.r*0.3,0,-s.r*3); ctx.fillStyle=s.color+g+')'; ctx.fill(); ctx.restore(); }
+        ctx.restore();
+      } else {
+        const gr=ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r*3);
+        gr.addColorStop(0,s.color+(g*0.8)+')'); gr.addColorStop(1,s.color+'0)');
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r*3, 0, Math.PI*2); ctx.fillStyle = gr; ctx.fill();
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fillStyle = s.color + g + ')'; ctx.fill();
+      }
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+  window.addEventListener('resize', () => { W=window.innerWidth; H=window.innerHeight; canvas.width=W; canvas.height=H; });
 </script>
 
 </body>
