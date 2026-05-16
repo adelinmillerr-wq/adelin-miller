@@ -1,0 +1,5 @@
+python-telegram-bot==21.5
+flask==3.0.3
+apscheduler==3.10.4
+requests==2.32.3
+psycopg2-binary==2.9.9
