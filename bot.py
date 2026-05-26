@@ -23,7 +23,7 @@ LAVA_API_KEY = os.environ.get('LAVA_API_KEY')
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 OWNER_ID     = 1619432734
 
-# Вместо логина и пароля используем секретный хвост в URL для защиты вебхука
+# Секретный хвост в URL для защиты вебхука
 LAVA_WEBHOOK_SECRET_PATH = 'secure_payment_callback_777'
 
 TARIFFS = {
@@ -32,11 +32,11 @@ TARIFFS = {
     3: {'name': 'Тест', 'price': 50, 'days': 1},
 }
 
-# Ссылки на продукты lava.top
+# Все три новые интеграционные ссылки на виджеты lava.top полностью настроены
 LAVA_URLS = {
-    1: 'https://app.lava.top/products/d3fd9467-c625-4b2f-a8f0-332f6a9e174a/24e3dbc6-4339-4000-9835-ce31b2ade2d5',
-    2: 'https://app.lava.top/products/9e4d87ed-31cb-4393-88bc-04d7e207aaee',
-    3: 'https://app.lava.top/products/8d911884-c3c2-4296-ab44-996025bd8ee4',
+    1: 'https://widget.lava.top/cd4f69b5-6817-4b5a-bec6-c08aa94c6b68',
+    2: 'https://widget.lava.top/1a45306a-2ce1-428b-9f7d-375736bed15b',
+    3: 'https://widget.lava.top/c77b5806-7a38-474f-be08-18c45e25b449',
 }
 
 app = Flask(__name__)
@@ -122,7 +122,7 @@ def create_crypto_invoice(chat_id, tariff_id):
 
 
 def make_lava_url(chat_id, tariff_id):
-    """Добавляем chat_id в ссылку lava.top как UTM параметр"""
+    """Добавляем chat_id в виджет-ссылку lava.top как UTM параметр"""
     base_url = LAVA_URLS.get(tariff_id, '')
     return f"{base_url}?utm_content={chat_id}_{tariff_id}"
 
@@ -136,16 +136,13 @@ def lavatop_result():
     if not data:
         return 'bad data', 400
 
-    # Определяем тип события и вложенные данные платежа
     event_type = data.get('type', '')
     payload_data = data.get('data', {})
     
-    # Отсекаем все лишние события, обрабатываем только успешную оплату
     if event_type not in ['payment.success', 'invoice.paid', 'subscription.started']:
         if payload_data.get('status') not in ['success', 'paid', 'completed']:
             return 'ignored event', 200
 
-    # Безопасно достаем utm_content из возможных мест в JSON структуре Lavatop
     utm_content = data.get('utm_content') or payload_data.get('utm_content')
     
     if not utm_content and 'order' in payload_data:
@@ -273,7 +270,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"DB error: {e}")
 
-    # Крипто кнопки
     try:
         usdt1 = rub_to_usdt(690)
         usdt4 = rub_to_usdt(8990)
@@ -286,13 +282,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = []
 
-    # Крипто кнопки сверху
     if url_crypto1:
         keyboard.append([InlineKeyboardButton(f"💎 1 месяц — {usdt1} USDT (крипта)", url=url_crypto1)])
     if url_crypto4:
         keyboard.append([InlineKeyboardButton(f"💎 Навсегда — {usdt4} USDT (крипта)", url=url_crypto4)])
 
-    # Lava.top кнопки
     keyboard.append([InlineKeyboardButton("💜 1 месяц — 690 руб (АКЦИЯ)", url=make_lava_url(chat_id, 1))])
     keyboard.append([InlineKeyboardButton("💜 Навсегда — 8990 руб (ВЫГОДНО)", url=make_lava_url(chat_id, 2))])
     keyboard.append([InlineKeyboardButton("🧪 Тест — 50 руб", url=make_lava_url(chat_id, 3))])
