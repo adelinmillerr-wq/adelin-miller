@@ -23,9 +23,8 @@ LAVA_API_KEY = os.environ.get('LAVA_API_KEY')
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 OWNER_ID     = 1619432734
 
-# Логин/пароль для вебхука lava.top
-LAVA_WEBHOOK_LOGIN    = 'adelin'
-LAVA_WEBHOOK_PASSWORD = 'Albina1991!'
+# Вместо логина и пароля используем секретный хвост в URL для защиты вебхука
+LAVA_WEBHOOK_SECRET_PATH = 'secure_payment_callback_777'
 
 TARIFFS = {
     1: {'name': '1 месяц',  'price': 690,  'days': 30},
@@ -128,43 +127,50 @@ def make_lava_url(chat_id, tariff_id):
     return f"{base_url}?utm_content={chat_id}_{tariff_id}"
 
 
-@app.route('/lava/result', methods=['POST'])
+@app.route(f'/lava/result/{LAVA_WEBHOOK_SECRET_PATH}', methods=['POST'])
 def lavatop_result():
-    """Вебхук от lava.top после оплаты"""
-    auth = request.authorization
-    if not auth or auth.username != LAVA_WEBHOOK_LOGIN or auth.password != LAVA_WEBHOOK_PASSWORD:
-        logger.warning("Lava.top: неверная авторизация")
-        return 'unauthorized', 401
-
+    """Вебхук от lava.top после успешной оплаты"""
     data = request.json
-    logger.info(f"Lava.top webhook: {data}")
+    logger.info(f"Lava.top webhook received raw data: {data}")
 
     if not data:
-        return 'ok'
+        return 'bad data', 400
 
-    # Тип события
+    # Определяем тип события и вложенные данные платежа
     event_type = data.get('type', '')
-    status = data.get('status', '')
-    if event_type != 'payment.success' and status not in ('success', 'paid', 'completed'):
-        return 'ok'
+    payload_data = data.get('data', {})
+    
+    # Отсекаем все лишние события, обрабатываем только успешную оплату
+    if event_type not in ['payment.success', 'invoice.paid', 'subscription.started']:
+        if payload_data.get('status') not in ['success', 'paid', 'completed']:
+            return 'ignored event', 200
 
-    # Получаем chat_id из UTM параметра
-    buyer_email = data.get('buyer_email', '')
-    utm_content = data.get('utm_content', '')
+    # Безопасно достаем utm_content из возможных мест в JSON структуре Lavatop
+    utm_content = data.get('utm_content') or payload_data.get('utm_content')
+    
+    if not utm_content and 'order' in payload_data:
+        utm_content = payload_data['order'].get('utm_content')
 
-    if utm_content and '_' in utm_content:
+    logger.info(f"Extracted utm_content: {utm_content}")
+
+    if utm_content and '_' in str(utm_content):
         try:
-            parts = utm_content.split('_')
+            parts = str(utm_content).split('_')
             chat_id = int(parts[0])
             tariff_id = int(parts[1])
+            
+            logger.info(f"Triggering payment processing for chat_id: {chat_id}, tariff: {tariff_id}")
+            
             asyncio.run_coroutine_threadsafe(
                 process_payment(chat_id, tariff_id, payment_type='lava'),
                 main_loop
             )
         except Exception as e:
             logger.error(f"Lava parse error: {e}")
+    else:
+        logger.warning("Webhook received but no valid utm_content found or wrong format.")
 
-    return 'ok'
+    return 'ok', 200
 
 
 @app.route('/cryptobot/result', methods=['POST'])
