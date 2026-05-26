@@ -288,9 +288,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if url_crypto1:
         keyboard.append([InlineKeyboardButton(crypto_btn1, url=url_crypto1)])
     if url_crypto2:
-        keyboard.append([InlineKeyboardButton(crypto_btn2, url=url_crypto2)])
-    keyboard.append([InlineKeyboardButton("💜 1 месяц — 690 руб (АКЦИЯ)", url=url1)])
-    keyboard.append([InlineKeyboardButton("💜 Навсегда — 8990 руб (ВЫГОДНО)", url=url2)])
+        keyboard.append([InlineKeyboardButton(crypto_btn2, url=url_crypto2)]
 
     text = (
         "Привет! Пока другие платят тысячи за курсы — ты получаешь всё и сразу 🔐\n\n"
