@@ -22,6 +22,7 @@ import html
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Any
+from urllib.parse import quote
 
 import pg8000.native
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -714,7 +715,7 @@ def _remove_from_blacklist(user_id: Optional[int], username: Optional[str]) -> i
 
 
 # ---------------------------------------------------------------------------
-# ПОЛНЫЙ НАБОР АДМИН-КОМАНД
+# АДМИН-КОМАНДЫ
 # ---------------------------------------------------------------------------
 
 @router.message(Command("status"))
@@ -1706,17 +1707,44 @@ async def grant_access(bot: Bot, email: str, amount, currency, contract_id: str,
 # ---------------------------------------------------------------------------
 
 def verify_yoomoney_sign(params: dict[str, str]) -> bool:
+    """Универсальная проверка подписи ЮMoney (поддерживает и SHA-256 sign, и SHA-1 sha1_hash)."""
     if not YOOMONEY_NOTIFICATION_SECRET:
         log.error("YOOMONEY_NOTIFICATION_SECRET не задан")
         return False
-    given = (params.get("sha1_hash") or "").lower()
-    if not given:
-        return False
 
-    str_to_hash = f"{params.get('notification_type')}&{params.get('operation_id')}&{params.get('amount')}&{params.get('currency')}&{params.get('datetime')}&{params.get('sender')}&{params.get('codepro')}&{YOOMONEY_NOTIFICATION_SECRET}&{params.get('label')}"
-    
-    digest = hashlib.sha1(str_to_hash.encode('utf-8')).hexdigest()
-    return hmac.compare_digest(digest.lower(), given)
+    # 1. Вариант SHA-256 (поле 'sign')
+    sign_given = (params.get("sign") or "").lower()
+    if sign_given:
+        parts = []
+        for key in sorted(k for k in params if k != "sign"):
+            val = str(params.get(key, ''))
+            parts.append(f"{key}={quote(val, safe='-_.~')}")
+        payload = "&".join(parts)
+        calculated_sign = hmac.new(
+            YOOMONEY_NOTIFICATION_SECRET.encode("utf-8"),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest().lower()
+        if hmac.compare_digest(calculated_sign, sign_given):
+            return True
+
+    # 2. Вариант SHA-1 (поле 'sha1_hash')
+    sha1_given = (params.get("sha1_hash") or "").lower()
+    if sha1_given:
+        n_type = params.get("notification_type", "")
+        op_id = params.get("operation_id", "")
+        amount = params.get("amount", "")
+        currency = params.get("currency", "")
+        dt_val = params.get("datetime", "")
+        sender = params.get("sender", "")
+        codepro = params.get("codepro", "")
+        label = params.get("label", "")
+        raw_str = f"{n_type}&{op_id}&{amount}&{currency}&{dt_val}&{sender}&{codepro}&{YOOMONEY_NOTIFICATION_SECRET}&{label}"
+        calculated_sha1 = hashlib.sha1(raw_str.encode("utf-8")).hexdigest().lower()
+        if hmac.compare_digest(calculated_sha1, sha1_given):
+            return True
+
+    return False
 
 
 async def handle_yoomoney_pay(request: web.Request) -> web.Response:
@@ -1768,23 +1796,27 @@ async def handle_yoomoney_pay(request: web.Request) -> web.Response:
 
 async def handle_yoomoney_notification(request: web.Request) -> web.Response:
     if request.match_info.get("secret") != WEBHOOK_SECRET:
+        log.warning("Неверный WEBHOOK_SECRET в URL вебхука")
         return web.Response(status=404, text="not found")
 
     form = await request.post()
     params = {k: str(v) for k, v in form.items()}
     log.info("Уведомление от ЮMoney: %s", json.dumps(params, ensure_ascii=False))
 
+    label = params.get("label") or ""
+
+    # Проверка подписи
     if not verify_yoomoney_sign(params):
-        log.warning("ЮMoney: неверная подпись SHA1")
+        log.warning("ЮMoney: неверная подпись! Проверьте YOOMONEY_NOTIFICATION_SECRET в Render.")
         return web.Response(status=403, text="bad sign")
 
-    if params.get("unaccepted") == "true" or params.get("codepro") == "true":
+    if params.get("codepro") == "true":
+        log.warning("ЮMoney: платеж с кодом протекции, label=%s", label)
         return web.Response(text="ignored")
 
-    label = params.get("label") or ""
     info = load_yoomoney_attempt(label)
     if not info:
-        log.warning("ЮMoney: неизвестный label %s", label)
+        log.warning("ЮMoney: неизвестная метка label=%s", label)
         return web.Response(text="ok")
 
     if info.get("status") == "paid":
@@ -1798,7 +1830,7 @@ async def handle_yoomoney_notification(request: web.Request) -> web.Response:
         paid = 0
 
     if paid + 0.01 < expected:
-        log.warning("Сумма меньше ожидаемой: %s < %s", paid, expected)
+        log.warning("Сумма меньше ожидаемой: %s < %s для label=%s", paid, expected, label)
         return web.Response(text="ignored")
 
     tariff_key = info.get("tariff")
