@@ -1,6 +1,6 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-Бот доступа в клуб Creator Lab с оплатой через lava.top.
+ Бот доступа в клуб Creator Lab с оплатой через ЮMoney.
 
 Два тарифа:
   - month   : подписка на 1 месяц
@@ -9,11 +9,15 @@
 Логика:
   1. /start -> приветствие + кнопки выбора тарифа.
   2. Бот просит почту (на неё придёт чек) и сохраняет username.
-  3. Бот спрашивает способ оплаты (карта / СБП).
-  4. Бот создаёт счёт в lava.top -> получает ссылку на оплату.
-  5. После оплаты lava.top стучится на /lava/<secret> (вебхук).
-  6. Бот опознаёт покупателя (по метке utm_content = telegram-id),
-     выдаёт одноразовую ссылку в клуб и шлёт уведомление админу.
+  3. Бот создаёт ссылку на оплату ЮMoney.
+  4. После оплаты ЮMoney стучится на /yoomoney/notification.
+  5. Бот опознаёт покупателя по label,
+      выдаёт одноразовую ссылку в клуб и шлёт уведомление админу.
+
+Админ может менять цены прямо в Telegram:
+  /admin
+  /setprice month 699
+  /setprice forever 9990
 
 Все секреты берутся из переменных окружения (Render -> Environment).
 """
@@ -172,6 +176,10 @@ class Buy(StatesGroup):
     waiting_method = State()
 
 
+class AdminPrice(StatesGroup):
+    waiting_for_price = State()
+
+
 router = Router()
 
 
@@ -214,7 +222,6 @@ async def resolve_offer_id(session: ClientSession, tariff_key: str) -> str:
         log.info("[%s] offerId из env: %s", tariff_key, t["offer_id"])
         return t["offer_id"]
 
-    # пробуем достать из списка продуктов
     try:
         async with session.get(
             f"{LAVA_BASE}/api/v2/products",
@@ -235,7 +242,6 @@ async def resolve_offer_id(session: ClientSession, tariff_key: str) -> str:
     except Exception as e:  # noqa: BLE001
         log.warning("[%s] Не удалось получить продукты: %s", tariff_key, e)
 
-    # запасной вариант
     resolved_offers[tariff_key] = t["product_id"]
     log.info("[%s] используем product_id как offerId: %s", tariff_key, t["product_id"])
     return t["product_id"]
@@ -250,7 +256,6 @@ async def create_invoice(
     invoice_price = price_override or t["price"]
     offer_id = await resolve_offer_id(session, tariff_key)
 
-    # метки, по которым потом опознаём покупателя и тариф (вернутся в вебхуке)
     client_utm = {
         "utm_source": "tgbot",
         "utm_content": str(user_id),
@@ -259,8 +264,6 @@ async def create_invoice(
     }
 
     if method == "sbp":
-        # СБП: строго по примеру поддержки lava — только эти поля, без лишнего.
-        # (buyerLanguage и clientUtm лава для v3/СБП не принимает -> "Restricted payment method type")
         endpoint = f"{LAVA_BASE}/api/v3/invoice"
         body = {
             "email": email,
@@ -270,7 +273,6 @@ async def create_invoice(
             "paymentMethod": "SBP",
         }
     else:
-        # Карта: через v2
         endpoint = f"{LAVA_BASE}/api/v2/invoice"
         body = {
             "email": email,
@@ -313,7 +315,6 @@ async def create_invoice(
 # ---------------------------------------------------------------------------
 
 def parse_db_url(url: str):
-    # postgres://user:pass@host:port/dbname
     m = re.match(r"postgres(?:ql)?://([^:]+):([^@]+)@([^:/]+):?(\d+)?/(.+)", url)
     if not m:
         raise ValueError("Не удалось разобрать DATABASE_URL")
@@ -342,8 +343,6 @@ def init_db():
             end_dt TIMESTAMP,
             status TEXT
         )''')
-        # колонка для отметки, какое напоминание уже отправлено (0=нет, 3=за 3 дня, 1=за 1 день)
-        # ALTER в try, чтобы не падать если колонка уже есть (старая база)
         try:
             conn.run("ALTER TABLE members ADD COLUMN IF NOT EXISTS reminded_stage INTEGER DEFAULT 0")
         except Exception as _e:  # noqa: BLE001
@@ -354,8 +353,6 @@ def init_db():
             username TEXT,
             accepted_at TIMESTAMP
         )''')
-        # таблица ожидания: участники из Excel, у которых пока нет user_id.
-        # слушатель группы найдёт их по username и перенесёт в members с настоящим id.
         conn.run('''CREATE TABLE IF NOT EXISTS pending_members (
             username TEXT PRIMARY KEY,
             tariff TEXT,
@@ -391,16 +388,12 @@ def init_db():
 
 
 def import_pending_from_json():
-    """Один раз загружает участников из members_import.json.
-    Есть id → сразу в members (бот видит и кикает). Нет id → в ожидание (pending),
-    слушатель группы допишет id потом. Повторный запуск не дублирует."""
     if not DATABASE_URL:
         return
     path = os.getenv("IMPORT_FILE", "members_import.json")
     if not os.path.exists(path):
         return
     try:
-        import json
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:  # noqa: BLE001
@@ -425,8 +418,7 @@ def import_pending_from_json():
                 except ValueError:
                     end_dt = None
 
-            if uid:  # есть id — заносим прямо в основную базу
-                # не перезаписываем тех, кто уже активен (например, недавно купил сам)
+            if uid:
                 exists = conn.run(
                     "SELECT 1 FROM members WHERE user_id=:uid AND status='active'", uid=uid)
                 if exists:
@@ -438,7 +430,7 @@ def import_pending_from_json():
                     "username=:un, tariff=:tf, end_dt=:ed, status='active'",
                     uid=int(uid), un=uname, tf=tariff, sd=datetime.now(), ed=end_dt)
                 to_members += 1
-            else:  # id нет — в ожидание, слушатель допишет
+            else:
                 in_main = conn.run(
                     "SELECT 1 FROM members WHERE LOWER(username)=LOWER(:un)", un=uname)
                 if in_main:
@@ -457,7 +449,6 @@ def import_pending_from_json():
 
 
 def save_consent(user_id: int, username: str):
-    """Фиксируем согласие с офертой — доказательство акцепта."""
     log.info("Согласие с офертой: user_id=%s username=%s", user_id, username)
     if not DATABASE_URL:
         return
@@ -475,7 +466,6 @@ def save_consent(user_id: int, username: str):
 
 def save_member(user_id: int, username: str, tariff_key: str,
                 start_dt: datetime, end_dt: Optional[datetime]):
-    """Сохраняем покупателя. end_dt=None для тарифа 'навсегда'."""
     if not DATABASE_URL:
         return
     try:
@@ -494,7 +484,6 @@ def save_member(user_id: int, username: str, tariff_key: str,
 
 
 def save_pending_payment(email: str, user_id: int, username: str, tariff_key: str):
-    """Запоминаем, кто создал счёт, в базе, а не только в памяти процесса."""
     if not DATABASE_URL:
         return
     try:
@@ -512,7 +501,6 @@ def save_pending_payment(email: str, user_id: int, username: str, tariff_key: st
 
 
 def load_pending_payment(email: str) -> Optional[dict]:
-    """Ищем покупателя по почте после рестарта Render."""
     if not DATABASE_URL:
         return None
     try:
@@ -602,7 +590,6 @@ def mark_yoomoney_attempt_paid(label: str):
 
 
 async def check_expired(bot: Bot):
-    """Раз в час: кикаем тех, у кого срок (end_dt) вышел. 'навсегда' (end_dt=NULL) не трогаем."""
     if not DATABASE_URL:
         return
     now = datetime.now()
@@ -620,14 +607,11 @@ async def check_expired(bot: Bot):
         if (end_dt - now).total_seconds() <= 0:
             kicked_ok = False
             try:
-                # ban + unban = выкинуть, но оставить возможность вернуться
                 await bot.ban_chat_member(chat_id=CLUB_CHAT_ID, user_id=user_id)
                 await bot.unban_chat_member(chat_id=CLUB_CHAT_ID, user_id=user_id)
                 kicked_ok = True
             except Exception as e:  # noqa: BLE001
                 err = str(e).lower()
-                # человека и так нет в группе (вышел сам) — кикать некого.
-                # тихо убираем из учёта, БЕЗ тревоги админу.
                 ghost_markers = (
                     "participant_id_invalid", "user_not_participant",
                     "member not found", "user not found",
@@ -643,7 +627,6 @@ async def check_expired(bot: Bot):
                         pass
                     log.info("Истёк и уже не в группе, убран тихо: @%s (%s)", username, user_id)
                     continue
-                # настоящая ошибка (например, нет прав банить) — сообщаем ОДИН раз
                 log.error("Ошибка кика %s: %s", user_id, e)
                 try:
                     await bot.send_message(
@@ -658,7 +641,6 @@ async def check_expired(bot: Bot):
                     pass
                 continue
 
-            # кик прошёл — помечаем, шлём человеку и уведомляем админа
             try:
                 c = get_db()
                 c.run("UPDATE members SET status='expired' WHERE user_id=:uid", uid=user_id)
@@ -672,7 +654,7 @@ async def check_expired(bot: Bot):
                     "Будем рады видеть снова — нажми /start, чтобы продлить.",
                 )
             except Exception:  # noqa: BLE001
-                pass  # человек мог закрыть лс боту — не страшно
+                pass
             log.info("Кикнут по истечении срока: %s", user_id)
             if kicked_ok:
                 try:
@@ -686,7 +668,7 @@ async def check_expired(bot: Bot):
                     log.error("Не смог уведомить админа о кике %s: %s", user_id, e2)
 
 
-# --- Напоминания об окончании подписки (за 3 дня и за 1 день) ---
+# --- Напоминания об окончании подписки ---
 
 REMIND_3_DAYS = (
     "Привет 🤍 Через 3 дня твой доступ в Creator Lab заканчивается.\n\n"
@@ -716,8 +698,6 @@ def renew_keyboard() -> InlineKeyboardMarkup:
 
 
 async def check_reminders(bot: Bot):
-    """Раз в день: шлём напоминания тем, у кого месяц заканчивается через 3 и 1 день.
-    Только тариф month (у 'навсегда' end_dt=NULL). Каждое напоминание — один раз."""
     if not DATABASE_URL:
         return
     now = datetime.now()
@@ -733,10 +713,9 @@ async def check_reminders(bot: Bot):
         return
 
     for user_id, end_dt, reminded in rows:
-        days_left = (end_dt - now).total_seconds() / 86400  # сколько суток осталось
+        days_left = (end_dt - now).total_seconds() / 86400
         reminded = reminded or 0
 
-        # за 1 день (от 0 до 1 суток) — приоритетнее, шлём если ещё не слали "1"
         if 0 < days_left <= 1 and reminded != 1:
             try:
                 await bot.send_message(user_id, REMIND_1_DAY, reply_markup=renew_keyboard())
@@ -747,7 +726,6 @@ async def check_reminders(bot: Bot):
             except Exception as e:  # noqa: BLE001
                 log.error("Не смог отправить напоминание (1д) %s: %s", user_id, e)
 
-        # за 3 дня (от 1 до 3 суток) — шлём если ещё ничего не слали (reminded==0)
         elif 1 < days_left <= 3 and reminded == 0:
             try:
                 await bot.send_message(user_id, REMIND_3_DAYS, reply_markup=renew_keyboard())
@@ -760,7 +738,6 @@ async def check_reminders(bot: Bot):
 
 
 async def build_status_text() -> str:
-    """Собирает сводку по подпискам для отчёта админу / команды /status."""
     if not DATABASE_URL:
         return "База не подключена, статус недоступен."
     now = datetime.now()
@@ -787,7 +764,7 @@ async def build_status_text() -> str:
     ]
     if active:
         lines.append("<b>Ближайшие окончания:</b>")
-        for username, end_dt in active[:10]:  # первые 10 по дате
+        for username, end_dt in active[:10]:
             days_left = (end_dt - now).total_seconds() / 86400
             mark = "⚠️" if days_left <= 3 else "🔹"
             lines.append(
@@ -803,7 +780,6 @@ async def build_status_text() -> str:
 
 
 async def daily_report(bot: Bot):
-    """Вечерний итог дня для админа — общая статистика по клубу."""
     try:
         today = datetime.now().strftime("%d.%m.%Y")
         text = await build_status_text()
@@ -833,7 +809,7 @@ def tariff_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-OFERTA_PATH = os.getenv("OFERTA_PATH", "oferta.pdf")  # PDF лежит рядом с bot.py
+OFERTA_PATH = os.getenv("OFERTA_PATH", "oferta.pdf")
 
 OFERTA_TEXT = (
     "Привет! 👋\n\n"
@@ -857,7 +833,6 @@ def accept_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-# Второй экран — короткое предупреждение перед тарифами (его реально читают)
 WARNING_TEXT = (
     "⚠️ <b>ВАЖНО. Прочти перед оплатой.</b>\n\n"
     "Все материалы Creator Lab — видео, промпты, методики, шаблоны — это моя "
@@ -883,7 +858,6 @@ def warning_keyboard() -> InlineKeyboardMarkup:
 
 @router.message(Command("status"))
 async def cmd_status(message: Message):
-    # отвечаем только администратору (тебе)
     if message.from_user.id != ADMIN_ID:
         return
     text = await build_status_text()
@@ -897,21 +871,17 @@ def _is_admin(message: Message) -> bool:
 
 
 def _clean_username(raw: str) -> str:
-    """Убираем @ и пробелы из ника."""
     return raw.strip().lstrip("@").strip()
 
 
 def _parse_target(raw: str):
-    """Распознаёт, что ввёл админ: числовой id или @username.
-    Возвращает (user_id|None, username|None)."""
     t = raw.strip().lstrip("@").strip()
-    if t.lstrip("-").isdigit():   # это числовой id
+    if t.lstrip("-").isdigit():
         return int(t), None
-    return None, t                # это ник
+    return None, t
 
 
 async def _lookup_in_db(user_id=None, username=None):
-    """Ищет участника в базе по id или нику. Возвращает (user_id, username) или (None, None)."""
     if not DATABASE_URL:
         return None, None
     try:
@@ -930,7 +900,6 @@ async def _lookup_in_db(user_id=None, username=None):
 
 
 def _find_blacklist_entry(user_id: Optional[int] = None, username: Optional[str] = None):
-    """Ищет пользователя в черном списке по id или username."""
     if not DATABASE_URL:
         return None
     uname = _clean_username(username or "") if username else None
@@ -1045,12 +1014,106 @@ def _remove_from_blacklist(user_id: Optional[int], username: Optional[str]) -> i
     finally:
         conn.close()
 
+
+def admin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"Изменить «1 месяц» ({TARIFFS['month']['price']}₽)",
+                    callback_data="admin_setprice:month",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"Изменить «Навсегда» ({TARIFFS['forever']['price']}₽)",
+                    callback_data="admin_setprice:forever",
+                ),
+            ],
+        ]
+    )
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    if not _is_admin(message):
+        return
+    await message.answer(
+        "⚙️ <b>Панель управления ценами</b>\n\n"
+        f"💛 Тариф «1 месяц»: <b>{TARIFFS['month']['price']}₽</b>\n"
+        f"💎 Тариф «Навсегда»: <b>{TARIFFS['forever']['price']}₽</b>\n\n"
+        "Выбери кнопку ниже, чтобы установить любую цену:",
+        reply_markup=admin_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("admin_setprice:"))
+async def on_admin_setprice_btn(cb: CallbackQuery, state: FSMContext):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    tariff_key = cb.data.split(":")[1]
+    await state.update_data(tariff=tariff_key)
+    await state.set_state(AdminPrice.waiting_for_price)
+    await cb.message.answer(
+        f"Напиши новую цену в рублях для тарифа <b>«{TARIFFS[tariff_key]['name']}»</b> (только число):"
+    )
+    await cb.answer()
+
+
+@router.message(StateFilter(AdminPrice.waiting_for_price))
+async def on_new_price_input(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        return
+    raw_price = (message.text or "").strip()
+    if not raw_price.isdigit() or int(raw_price) <= 0:
+        await message.answer("Пожалуйста, отправь корректное число больше нуля. Например: 790")
+        return
+
+    new_price = int(raw_price)
+    data = await state.get_data()
+    tariff_key = data.get("tariff")
+    if tariff_key in TARIFFS:
+        TARIFFS[tariff_key]["price"] = new_price
+        await state.clear()
+        await message.answer(
+            f"✅ Цена тарифа «{TARIFFS[tariff_key]['name']}» успешно обновлена на <b>{new_price}₽</b>!\n\n"
+            f"<i>(Если бот перезапустится на Render, вернутся цены из переменных окружения PRICE_MONTH/PRICE_FOREVER)</i>",
+            reply_markup=admin_keyboard(),
+        )
+    else:
+        await state.clear()
+        await message.answer("Ошибка: тариф не найден. Нажми /admin заново.")
+
+
+@router.message(Command("setprice"))
+async def cmd_setprice(message: Message):
+    if not _is_admin(message):
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 3 or parts[1] not in ("month", "forever") or not parts[2].isdigit():
+        await message.answer(
+            "Использование команды:\n"
+            "<code>/setprice month 699</code>\n"
+            "<code>/setprice forever 9990</code>\n\n"
+            "Или просто используй меню: /admin"
+        )
+        return
+    tariff_key, price = parts[1], int(parts[2])
+    TARIFFS[tariff_key]["price"] = price
+    await message.answer(f"✅ Цена тарифа «{TARIFFS[tariff_key]['name']}» изменена на <b>{price}₽</b>.")
+
+
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     if not _is_admin(message):
         return
     await message.answer(
         "🛠 <b>Админ-команды</b>\n\n"
+        "<b>Цены и тарифы:</b>\n"
+        "/admin — открыть панель изменения цен (кнопками)\n"
+        "/setprice month 699 — быстро изменить цену месяца\n"
+        "/setprice forever 9990 — быстро изменить цену навсегда\n\n"
         "<b>Просмотр:</b>\n"
         "/status — краткая сводка (на посту ли я)\n"
         "/members — полный список участников со сроками\n"
@@ -1103,8 +1166,6 @@ async def cmd_members(message: Message, bot: Bot):
         await message.answer("В базе пока нет участников.")
         return
 
-    # формируем список с нумерацией, разбивая на части (Telegram лимит ~4096)
-    # сортируем: сначала активные месячные (по дате), потом VIP, потом истёкшие
     active_month = []
     vip = []
     expired = []
@@ -1118,8 +1179,6 @@ async def cmd_members(message: Message, bot: Bot):
 
     living = len(active_month) + len(vip)
 
-    # реальное число людей в группе — это Telegram боту отдать разрешает
-    # (в отличие от полного списка). Показываем рядом, чтобы видеть расхождение.
     try:
         group_count = await bot.get_chat_member_count(CLUB_CHAT_ID)
         group_line = f"👤 Сейчас в группе (по Telegram): {group_count}\n"
@@ -1143,12 +1202,9 @@ async def cmd_members(message: Message, bot: Bot):
         for i, (username, start_dt) in enumerate(vip, 1):
             lines.append(f"{i}. 💎 @{username or '—'}")
 
-    # истёкших НЕ показываем — они остаются в базе для истории,
-    # но глаза тебе не мозолят. Их число просто выносим строкой ниже.
     if expired:
         lines.append(f"\n🗄 В архиве (истёкшие, скрыты): {len(expired)}")
 
-    # отправляем кусками по 50 строк, чтобы не упереться в лимит Telegram
     chunk = []
     for line in lines:
         chunk.append(line)
@@ -1238,8 +1294,6 @@ async def cmd_stats(message: Message):
 
 @router.message(Command("sync"))
 async def cmd_sync(message: Message, bot: Bot):
-    """Сверяет базу с реальным составом группы и убирает призраков
-    (тех, кого в группе уже нет)."""
     if not _is_admin(message):
         return
     if not DATABASE_URL:
@@ -1257,7 +1311,7 @@ async def cmd_sync(message: Message, bot: Bot):
         await message.answer(f"Ошибка чтения базы: {e}")
         return
 
-    ghosts = []      # кого нет в группе
+    ghosts = []
     checked = 0
     errors = 0
 
@@ -1265,15 +1319,11 @@ async def cmd_sync(message: Message, bot: Bot):
         checked += 1
         try:
             member = await bot.get_chat_member(CLUB_CHAT_ID, user_id)
-            # ТОЛЬКО если Telegram ТОЧНО говорит, что человек вышел/забанен
             if member.status in ("left", "kicked"):
                 ghosts.append((user_id, username, tariff))
         except Exception as e:  # noqa: BLE001
-            # не смогли проверить — НЕ трогаем человека (оставляем как есть).
-            # лучше пропустить, чем зря убрать живого
             errors += 1
             log.warning("sync: не смог проверить @%s (id %s): %s", username, user_id, e)
-        # маленькая пауза, чтобы не упереться в лимиты Telegram
         await asyncio.sleep(0.05)
 
     if not ghosts:
@@ -1283,7 +1333,6 @@ async def cmd_sync(message: Message, bot: Bot):
         await message.answer(msg)
         return
 
-    # помечаем призраков как истёкших (убираем из активного учёта)
     try:
         conn = get_db()
         for user_id, _u, _t in ghosts:
@@ -1293,7 +1342,6 @@ async def cmd_sync(message: Message, bot: Bot):
         await message.answer(f"Нашёл призраков, но не смог обновить базу: {e}")
         return
 
-    # формируем отчёт
     lines = [f"🧹 <b>Синхронизация завершена</b>\n",
              f"Проверено: {checked}",
              f"Убрано призраков (нет в группе): {len(ghosts)}\n",
@@ -1302,7 +1350,6 @@ async def cmd_sync(message: Message, bot: Bot):
         tag = "💎VIP" if tariff == "vip" else "месяц"
         lines.append(f"{i}. @{username or '—'} ({tag})")
 
-    # отправляем кусками
     chunk = []
     for line in lines:
         chunk.append(line)
@@ -1315,8 +1362,6 @@ async def cmd_sync(message: Message, bot: Bot):
 
 @router.message(Command("reimport"))
 async def cmd_reimport(message: Message):
-    """Перечитывает members_import.json и возвращает всех на правильные места
-    (восстановление базы, если что-то пошло не так с /sync)."""
     if not _is_admin(message):
         return
     if not DATABASE_URL:
@@ -1329,7 +1374,6 @@ async def cmd_reimport(message: Message):
     await message.answer("🔄 Перечитываю список из файла и восстанавливаю базу…")
 
     try:
-        import json
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:  # noqa: BLE001
@@ -1352,7 +1396,6 @@ async def cmd_reimport(message: Message):
                     end_dt = datetime.strptime(end_raw, "%Y-%m-%d")
                 except ValueError:
                     end_dt = None
-            # принудительно возвращаем в active с правильными данными
             conn.run(
                 "INSERT INTO members (user_id, username, tariff, start_dt, end_dt, status, reminded_stage) "
                 "VALUES (:uid, :un, :tf, :sd, :ed, 'active', 0) "
@@ -1447,6 +1490,7 @@ async def cmd_sale(message: Message, bot: Bot):
         f"✅ Рассылка завершена.\nОтправлено: {sent}\nНе отправилось: {failed}"
     )
 
+
 @router.message(Command("ban"))
 async def cmd_ban(message: Message):
     if not _is_admin(message):
@@ -1527,6 +1571,7 @@ async def cmd_unban(message: Message):
     else:
         await message.answer(f"{name_show} не найден(а) в черном списке.")
 
+
 @router.message(Command("add"))
 async def cmd_add(message: Message):
     if not _is_admin(message):
@@ -1543,14 +1588,11 @@ async def cmd_add(message: Message):
     target = parts[1]
     term = parts[2].lower()
 
-    # распознаём id или ник
     uid, uname = _parse_target(target)
-    # если переслано сообщение — берём id оттуда (приоритет)
     if message.forward_from:
         uid = message.forward_from.id
         uname = message.forward_from.username or uname
 
-    # если дали ник — пробуем найти id в базе
     if uid is None:
         uid, found = await _lookup_in_db(username=uname)
         if found:
@@ -1567,7 +1609,6 @@ async def cmd_add(message: Message):
         end_dt = None
         tariff = "forever"
     elif "." in term:
-        # формат даты: 16.07.2026 или 16.07.26
         end_dt = None
         for fmt in ("%d.%m.%Y", "%d.%m.%y"):
             try:
@@ -1628,7 +1669,6 @@ async def cmd_vip(message: Message):
         )
         return
 
-    # VIP = тариф 'vip', без даты окончания → бот никогда не кикнет
     save_member(uid, uname or "—", "vip", datetime.now(), None)
     name_show = ("@" + uname) if uname else f"id {uid}"
     await message.answer(
@@ -1701,7 +1741,6 @@ async def cmd_extend(message: Message):
             await message.answer(f"{who} не найден. Сначала добавь через /add.")
             return
         user_id, end_dt, db_name = rows[0]
-        # продлеваем от текущей даты окончания или от сегодня, если уже истёк
         base = end_dt if (end_dt and end_dt > now) else now
         new_end = base + timedelta(days=days)
         conn.run(
@@ -1731,12 +1770,10 @@ async def cmd_remove(message: Message, bot: Bot):
         return
 
     uid, uname = _parse_target(parts[1])
-    # если переслано сообщение — берём id оттуда
     if message.forward_from:
         uid = message.forward_from.id
         uname = message.forward_from.username or uname
 
-    # если дали ник — ищем id в базе
     if uid is None:
         uid, found = await _lookup_in_db(username=uname)
         if found:
@@ -1748,7 +1785,6 @@ async def cmd_remove(message: Message, bot: Bot):
         )
         return
 
-    # защита: VIP нельзя удалить случайно
     if DATABASE_URL:
         try:
             conn = get_db()
@@ -1765,7 +1801,6 @@ async def cmd_remove(message: Message, bot: Bot):
         except Exception:  # noqa: BLE001
             pass
 
-    # помечаем в базе как истёкшего (если есть)
     if DATABASE_URL:
         try:
             conn = get_db()
@@ -1774,7 +1809,6 @@ async def cmd_remove(message: Message, bot: Bot):
         except Exception as e:  # noqa: BLE001
             log.error("remove: ошибка базы для %s: %s", uid, e)
 
-    # кикаем из клуба
     name_show = ("@" + uname) if uname else f"id {uid}"
     try:
         await bot.ban_chat_member(chat_id=CLUB_CHAT_ID, user_id=uid)
@@ -1789,7 +1823,6 @@ async def cmd_remove(message: Message, bot: Bot):
 
 @router.message(Command("cleanup"))
 async def cmd_cleanup(message: Message):
-    """Показывает должников (истёкших, ещё активных в учёте) с кнопками 'Убрать'."""
     if not _is_admin(message):
         return
     if not DATABASE_URL:
@@ -1815,7 +1848,6 @@ async def cmd_cleanup(message: Message):
         f"⏰ <b>У этих закончился срок ({len(rows)}):</b>\n"
         "Жми «Убрать» напротив тех, кого выгнать из учёта."
     )
-    # шлём каждого отдельным сообщением с кнопкой
     for user_id, username, end_dt in rows:
         d = end_dt.strftime("%d.%m.%Y") if end_dt else "—"
         kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -1831,8 +1863,6 @@ async def cmd_cleanup(message: Message):
 
 @router.message(Command("purge"))
 async def cmd_purge(message: Message, bot: Bot):
-    """Разом убирает из учёта ВСЕХ, у кого срок уже истёк. Кикает тех, кто ещё в группе.
-    Одна команда — чистит всех просроченных, без ручного перебора."""
     if not _is_admin(message):
         return
     if not DATABASE_URL:
@@ -1857,7 +1887,6 @@ async def cmd_purge(message: Message, bot: Bot):
     kicked = 0
     archived = 0
     for user_id, username in rows:
-        # помечаем истёкшим
         try:
             conn = get_db()
             conn.run("UPDATE members SET status='expired' WHERE user_id=:uid", uid=user_id)
@@ -1865,13 +1894,12 @@ async def cmd_purge(message: Message, bot: Bot):
             archived += 1
         except Exception:  # noqa: BLE001
             pass
-        # пытаемся кикнуть (если ещё в группе)
         try:
             await bot.ban_chat_member(chat_id=CLUB_CHAT_ID, user_id=user_id)
             await bot.unban_chat_member(chat_id=CLUB_CHAT_ID, user_id=user_id)
             kicked += 1
         except Exception:  # noqa: BLE001
-            pass  # нет в группе — и ладно, просто архивируем
+            pass
         await asyncio.sleep(0.05)
 
     await message.answer(
@@ -1889,7 +1917,6 @@ async def on_kick_button(cb: CallbackQuery, bot: Bot):
         await cb.answer("Только для админа")
         return
     uid = int(cb.data.split(":")[1])
-    # убираем из учёта
     if DATABASE_URL:
         try:
             conn = get_db()
@@ -1897,7 +1924,6 @@ async def on_kick_button(cb: CallbackQuery, bot: Bot):
             conn.close()
         except Exception:  # noqa: BLE001
             pass
-    # пытаемся кикнуть (если он всё же в группе)
     note = "убран из учёта"
     try:
         await bot.ban_chat_member(chat_id=CLUB_CHAT_ID, user_id=uid)
@@ -1934,7 +1960,6 @@ async def on_ext30_button(cb: CallbackQuery):
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    # Отправляем PDF-оферту + кнопку «Принимаю»
     try:
         await message.answer_document(
             FSInputFile(OFERTA_PATH, filename="Договор-оферта Creator Lab.pdf"),
@@ -1942,17 +1967,14 @@ async def cmd_start(message: Message, state: FSMContext):
             reply_markup=accept_keyboard(),
         )
     except Exception as e:  # noqa: BLE001
-        # если файл не нашёлся — не блокируем человека, показываем текст
-        logger.error("Не смог отправить PDF оферты: %s", e)
+        log.error("Не смог отправить PDF оферты: %s", e)
         await message.answer(OFERTA_TEXT, reply_markup=accept_keyboard())
 
 
 @router.callback_query(F.data == "accept_oferta")
 async def on_accept(cb: CallbackQuery, state: FSMContext):
     user = cb.from_user
-    # фиксируем согласие в базе (доказательство)
     save_consent(user.id, user.username)
-    # показываем второй экран-предупреждение (его реально читают), тарифы — после него
     await cb.message.answer(WARNING_TEXT, reply_markup=warning_keyboard())
     await cb.answer("Спасибо! Условия приняты ✅")
 
@@ -1960,7 +1982,6 @@ async def on_accept(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "accept_warning")
 async def on_accept_warning(cb: CallbackQuery, state: FSMContext):
     user = cb.from_user
-    # ещё раз фиксируем согласие — теперь именно с предупреждением
     save_consent(user.id, user.username)
     await cb.message.answer(GREETING, reply_markup=tariff_keyboard())
     await cb.answer("Принято ✅")
@@ -1991,6 +2012,7 @@ async def on_sale_month(cb: CallbackQuery, state: FSMContext):
     )
     await cb.answer()
 
+
 @router.callback_query(F.data.in_({"tariff_month", "tariff_forever"}))
 async def on_tariff(cb: CallbackQuery, state: FSMContext):
     user = cb.from_user
@@ -2014,7 +2036,6 @@ async def on_tariff(cb: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "renew_month")
 async def on_renew(cb: CallbackQuery, state: FSMContext):
-    """Кнопка 'Продлить доступ' из напоминания — запускает оплату месяца."""
     user = cb.from_user
     if not user.username:
         await cb.message.answer(ASK_USERNAME)
@@ -2215,7 +2236,6 @@ async def grant_access(bot: Bot, email: str, amount, currency, contract_id: str,
         )
         return
 
-    # считаем срок заранее, чтобы показать его и клиенту, и в учёте
     start_dt = datetime.now()
     end_dt = start_dt + timedelta(days=30) if tariff_key == "month" else None
 
@@ -2259,7 +2279,6 @@ async def grant_access(bot: Bot, email: str, amount, currency, contract_id: str,
         delete_pending_payment(email)
         return
 
-    # запись в базу для учёта срока
     save_member(user_id, username, tariff_key or "—", start_dt, end_dt)
 
     if end_dt:
@@ -2291,24 +2310,33 @@ def make_yoomoney_label(user_id: int) -> str:
 
 
 def verify_yoomoney_sign(params: dict[str, str]) -> bool:
-    """Проверка sign из HTTP-уведомлений ЮMoney."""
+    """
+    Проверка sha1_hash из HTTP-уведомлений ЮMoney.
+    Формула официального протокола ЮMoney:
+    sha1(notification_type&operation_id&amount&currency&datetime&sender&codepro&notification_secret&label)
+    """
     if not YOOMONEY_NOTIFICATION_SECRET:
         log.error("YOOMONEY_NOTIFICATION_SECRET не задан")
         return False
-    given = (params.get("sign") or "").lower()
-    if not given:
+
+    given_hash = (params.get("sha1_hash") or params.get("sign") or "").strip().lower()
+    if not given_hash:
         return False
 
-    parts = []
-    for key in sorted(k for k in params if k != "sign"):
-        parts.append(f"{key}={quote(str(params.get(key, '')), safe='-_.~')}")
-    payload = "&".join(parts)
-    digest = hmac.new(
-        YOOMONEY_NOTIFICATION_SECRET.encode("utf-8"),
-        payload.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(digest, given)
+    fields = [
+        params.get("notification_type", ""),
+        params.get("operation_id", ""),
+        params.get("amount", ""),
+        params.get("currency", ""),
+        params.get("datetime", ""),
+        params.get("sender", ""),
+        params.get("codepro", ""),
+        YOOMONEY_NOTIFICATION_SECRET,
+        params.get("label", ""),
+    ]
+    raw = "&".join(str(f) for f in fields)
+    calculated_hash = hashlib.sha1(raw.encode("utf-8")).hexdigest().lower()
+    return hmac.compare_digest(calculated_hash, given_hash)
 
 
 async def handle_yoomoney_pay(request: web.Request) -> web.Response:
@@ -2362,15 +2390,20 @@ async def handle_yoomoney_pay(request: web.Request) -> web.Response:
 
 
 async def handle_yoomoney_notification(request: web.Request) -> web.Response:
-    if request.match_info.get("secret") != WEBHOOK_SECRET:
+    secret = request.match_info.get("secret")
+    if secret is not None and secret != WEBHOOK_SECRET:
         return web.Response(status=404, text="not found")
 
     form = await request.post()
     params = {k: str(v) for k, v in form.items()}
     log.info("Уведомление ЮMoney: %s", json.dumps(params, ensure_ascii=False)[:2000])
 
+    if not params:
+        log.info("ЮMoney: получено пустое тестовое уведомление")
+        return web.Response(text="test ok")
+
     if not verify_yoomoney_sign(params):
-        log.warning("ЮMoney: неверная подпись sign")
+        log.warning("ЮMoney: неверная подпись sha1_hash")
         return web.Response(status=403, text="bad sign")
     if params.get("unaccepted") == "true" or params.get("codepro") == "true":
         log.warning("ЮMoney: перевод не принят или защищен кодом, label=%s", params.get("label"))
@@ -2432,8 +2465,11 @@ async def handle_ping(request: web.Request) -> web.Response:
     return web.Response(text="OK")
 
 
+async def handle_yoomoney_notification_check(request: web.Request) -> web.Response:
+    return web.Response(text="YOOMONEY NOTIFICATION ENDPOINT OK")
+
+
 async def handle_webhook(request: web.Request) -> web.Response:
-    # Защита — секретный адрес /lava/<secret>.
     if request.match_info.get("secret") != WEBHOOK_SECRET:
         return web.Response(status=404, text="not found")
 
@@ -2471,7 +2507,6 @@ async def handle_webhook(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         utm_user_id = None
 
-    # надёжный способ узнать тариф (работает и для СБП, где меток нет): по product_id
     if not tariff_key and product_id and product_id in PRODUCT_TO_TARIFF:
         tariff_key = PRODUCT_TO_TARIFF[product_id]
         tariff_name = TARIFFS[tariff_key]["name"]
@@ -2489,7 +2524,6 @@ async def handle_webhook(request: web.Request) -> web.Response:
     if contract_id:
         processed_contracts.add(contract_id)
 
-    # сверяем, что это один из наших продуктов
     if product_id and product_id not in PRODUCT_TO_TARIFF:
         log.warning("Оплата по неизвестному продукту %s, пропускаю", product_id)
         return web.json_response({"status": "wrong product"})
@@ -2512,24 +2546,20 @@ async def handle_webhook(request: web.Request) -> web.Response:
 
 @router.message(F.chat.id == CLUB_CHAT_ID)
 async def collect_id_from_group(message: Message):
-    """Слушатель клуба: ловит user_id активных участников и переносит
-    тех, кто ждёт в pending_members (из Excel), в основную базу с настоящим id."""
     if not DATABASE_URL or not message.from_user:
         return
     user = message.from_user
     if not user.username:
-        return  # без username не сопоставить со списком
+        return
     uname = user.username
     try:
         conn = get_db()
-        # уже в основной базе? обновим username на актуальный и выйдем
         in_main = conn.run("SELECT 1 FROM members WHERE user_id=:uid", uid=user.id)
         if in_main:
             conn.run("UPDATE members SET username=:un WHERE user_id=:uid",
                      un=uname, uid=user.id)
             conn.close()
             return
-        # ждёт в pending по username?
         pend = conn.run(
             "SELECT tariff, end_dt FROM pending_members WHERE LOWER(username)=LOWER(:un)",
             un=uname)
@@ -2548,9 +2578,7 @@ async def collect_id_from_group(message: Message):
 
 
 async def on_startup_checks(bot: Bot, session: ClientSession):
-    # импорт участников из Excel-файла в таблицу ожидания (один раз, без дублей)
     import_pending_from_json()
-    # Старый сценарий lava оставлен в коде, но для ЮMoney он не нужен.
     if LAVA_API_KEY:
         for key, t in TARIFFS.items():
             await resolve_offer_id(session, key)
@@ -2595,12 +2623,9 @@ async def main():
     init_db()
     await on_startup_checks(bot, session)
 
-    # планировщик: раз в час проверяем, у кого истёк месяц, и кикаем
     scheduler = AsyncIOScheduler()
     scheduler.add_job(check_expired, "interval", hours=1, args=[bot])
     scheduler.add_job(check_reminders, "interval", hours=12, args=[bot])
-    # ежедневный отчёт в 23:00 по Москве. Render работает по UTC, МСК = UTC+3,
-    # поэтому 23:00 МСК = 20:00 UTC. Если у тебя другой пояс — поменяй hour ниже.
     scheduler.add_job(daily_report, CronTrigger(hour=20, minute=0), args=[bot])
     scheduler.start()
     log.info("Планировщик кика запущен (проверка раз в час).")
@@ -2610,6 +2635,12 @@ async def main():
     app.router.add_get("/", handle_ping)
     app.router.add_get("/health", handle_ping)
     app.router.add_get("/yoomoney/pay/{label}", handle_yoomoney_pay)
+    app.router.add_get("/yoomoney/notification", handle_yoomoney_notification_check)
+    app.router.add_get("/yoomoney/notification/", handle_yoomoney_notification_check)
+    app.router.add_get("/yoomoney/notification/{secret}", handle_yoomoney_notification_check)
+    app.router.add_get("/yoomoney/notification/{secret}/", handle_yoomoney_notification_check)
+    app.router.add_post("/yoomoney/notification", handle_yoomoney_notification)
+    app.router.add_post("/yoomoney/notification/", handle_yoomoney_notification)
     app.router.add_post("/yoomoney/notification/{secret}", handle_yoomoney_notification)
     app.router.add_post("/yoomoney/notification/{secret}/", handle_yoomoney_notification)
     app.router.add_post("/yoomoney/{secret}", handle_yoomoney_notification)
