@@ -54,6 +54,9 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     FSInputFile,
+    BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
 )
 
 # ---------------------------------------------------------------------------
@@ -210,16 +213,10 @@ def _find_offer_id(node: Any, product_id: str) -> Optional[str]:
     return None
 
 
-async def handle_yoomoney_notification(request: web.Request) -> web.Response:
-    # Принимаем уведомление независимо от пути, логируем сразу
-    try:
-        form = await request.post()
-        params = {k: str(v) for k, v in form.items()}
-    except Exception as e:
-        log.error("Ошибка чтения данных ЮMoney: %s", e)
-        return web.Response(status=400, text="bad request")
-
-    log.info("🔔 Получено уведомление ЮMoney: %s", json.dumps(params, ensure_ascii=False)[:2000])
+async def resolve_offer_id(session: ClientSession, tariff_key: str) -> str:
+    """offerId для тарифа: из env, либо ищет по продукту, либо берёт product_id."""
+    if tariff_key in resolved_offers:
+        return resolved_offers[tariff_key]
 
     t = TARIFFS[tariff_key]
 
@@ -2396,24 +2393,33 @@ async def handle_yoomoney_pay(request: web.Request) -> web.Response:
 
 
 async def handle_yoomoney_notification(request: web.Request) -> web.Response:
-    secret = request.match_info.get("secret")
-    if secret is not None and secret != WEBHOOK_SECRET:
-        return web.Response(status=404, text="not found")
+    # 1. Логируем факт абсолютно любого входящего вызова
+    log.info("🔔 [ЮMoney Webhook] Входящий запрос: путь=%s, IP=%s", request.path, request.remote)
 
-    form = await request.post()
-    params = {k: str(v) for k, v in form.items()}
-    log.info("Уведомление ЮMoney: %s", json.dumps(params, ensure_ascii=False)[:2000])
+    try:
+        form = await request.post()
+        params = {k: str(v) for k, v in form.items()}
+    except Exception as e:
+        log.error("ЮMoney: ошибка чтения POST-формы: %s", e)
+        # Возвращаем 200 OK, чтобы ЮMoney не выключал вебхук
+        return web.Response(status=200, text="OK")
 
+    log.info("🔔 [ЮMoney Webhook] Данные формы: %s", json.dumps(params, ensure_ascii=False)[:2000])
+
+    # Тестовый пинг от ЮMoney без параметров
     if not params:
-        log.info("ЮMoney: получено пустое тестовое уведомление")
-        return web.Response(text="test ok")
+        log.info("ЮMoney: тестовый пинг без параметров (OK)")
+        return web.Response(status=200, text="OK")
 
+    # 2. Проверка валидности sha1 подписи
     if not verify_yoomoney_sign(params):
-        log.warning("ЮMoney: неверная подпись sha1_hash")
-        return web.Response(status=403, text="bad sign")
+        log.warning("ЮMoney: неверная подпись sha1_hash для операции %s", params.get("operation_id"))
+        # По протоколу возвращаем 200, но оплату не проводим
+        return web.Response(status=200, text="OK")
+
     if params.get("unaccepted") == "true" or params.get("codepro") == "true":
         log.warning("ЮMoney: перевод не принят или защищен кодом, label=%s", params.get("label"))
-        return web.Response(text="ignored")
+        return web.Response(status=200, text="OK")
 
     label = params.get("label") or ""
     info = load_yoomoney_attempt(label)
@@ -2426,9 +2432,10 @@ async def handle_yoomoney_notification(request: web.Request) -> web.Response:
             f"Операция: {params.get('operation_id')}\n"
             f"Проверь вручную в кошельке ЮMoney.",
         )
-        return web.Response(text="ok")
+        return web.Response(status=200, text="OK")
+
     if info.get("status") == "paid":
-        return web.Response(text="duplicate")
+        return web.Response(status=200, text="OK")
 
     expected = int(info.get("amount") or 0)
     paid_raw = params.get("withdraw_amount") or params.get("amount") or "0"
@@ -2436,6 +2443,7 @@ async def handle_yoomoney_notification(request: web.Request) -> web.Response:
         paid = float(str(paid_raw).replace(",", "."))
     except ValueError:
         paid = 0
+
     if paid + 0.01 < expected:
         log.warning("ЮMoney: сумма меньше ожидаемой %s < %s, label=%s", paid, expected, label)
         await request.app["bot"].send_message(
@@ -2444,10 +2452,11 @@ async def handle_yoomoney_notification(request: web.Request) -> web.Response:
             f"Ожидалось: {expected} RUB\nПолучено/списано: {paid_raw} RUB\n"
             f"Label: <code>{label}</code>",
         )
-        return web.Response(text="ignored")
+        return web.Response(status=200, text="OK")
 
     tariff_key = info.get("tariff")
     tariff_name = TARIFFS.get(tariff_key, {}).get("name", "—")
+
     await grant_access(
         request.app["bot"],
         info.get("email"),
@@ -2460,7 +2469,7 @@ async def handle_yoomoney_notification(request: web.Request) -> web.Response:
         username=info.get("username"),
     )
     mark_yoomoney_attempt_paid(label)
-    return web.Response(text="ok")
+    return web.Response(status=200, text="OK")
 
 
 # ---------------------------------------------------------------------------
@@ -2585,6 +2594,26 @@ async def collect_id_from_group(message: Message):
 
 async def on_startup_checks(bot: Bot, session: ClientSession):
     import_pending_from_json()
+
+    # Скрываем админские команды у обычных пользователей и показываем только для ADMIN_ID
+    try:
+        await bot.set_my_commands(
+            [BotCommand(command="start", description="Перезапустить бота")],
+            scope=BotCommandScopeDefault()
+        )
+        await bot.set_my_commands(
+            [
+                BotCommand(command="admin", description="⚙️ Изменить цены"),
+                BotCommand(command="status", description="📊 Статус клуба"),
+                BotCommand(command="members", description="👥 Список участников"),
+                BotCommand(command="help", description="🛠 Все команды админа"),
+            ],
+            scope=BotCommandScopeChat(chat_id=ADMIN_ID)
+        )
+        log.info("Персональное меню команд для админа успешно настроено.")
+    except Exception as e:  # noqa: BLE001
+        log.warning("Не удалось настроить меню команд: %s", e)
+
     if LAVA_API_KEY:
         for key, t in TARIFFS.items():
             await resolve_offer_id(session, key)
