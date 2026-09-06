@@ -210,10 +210,8 @@ def _find_offer_id(node: Any, product_id: str) -> Optional[str]:
     return None
 
 
-async def resolve_offer_id(session: ClientSession, tariff_key: str) -> str:
-    """offerId для тарифа: из env, либо ищет по продукту, либо берёт product_id."""
-    if tariff_key in resolved_offers:
-        return resolved_offers[tariff_key]
+async def handle_yoomoney_notification(request: web.Request) -> web.Response:
+    # Принимаем уведомление независимо от того, указан хвост секрета в URL или нет
 
     t = TARIFFS[tariff_key]
 
