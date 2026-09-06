@@ -211,7 +211,15 @@ def _find_offer_id(node: Any, product_id: str) -> Optional[str]:
 
 
 async def handle_yoomoney_notification(request: web.Request) -> web.Response:
-    # Принимаем уведомление независимо от того, указан хвост секрета в URL или нет
+    # Принимаем уведомление независимо от пути, логируем сразу
+    try:
+        form = await request.post()
+        params = {k: str(v) for k, v in form.items()}
+    except Exception as e:
+        log.error("Ошибка чтения данных ЮMoney: %s", e)
+        return web.Response(status=400, text="bad request")
+
+    log.info("🔔 Получено уведомление ЮMoney: %s", json.dumps(params, ensure_ascii=False)[:2000])
 
     t = TARIFFS[tariff_key]
 
