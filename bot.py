@@ -87,7 +87,7 @@ TARIFFS = {
     },
     "forever": {
         "name": "Навсегда",
-        "price": int(os.getenv("PRICE_FOREVER", "9990")),
+        "price": int(os.getenv("PRICE_FOREVER", "5990")),
     },
 }
 
@@ -1216,10 +1216,6 @@ async def daily_report(bot: Bot):
 def tariff_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"💛 1 месяц — {TARIFFS['month']['price']}₽",
-                callback_data="tariff_month",
-            )],
             [InlineKeyboardButton(
                 text=f"💎 Навсегда — {TARIFFS['forever']['price']}₽",
                 callback_data="tariff_forever",
