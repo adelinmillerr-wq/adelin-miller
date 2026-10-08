@@ -99,6 +99,10 @@ class AdminPrice(StatesGroup):
     waiting_for_price = State()
 
 
+class AdminAsk(StatesGroup):
+    waiting = State()
+
+
 router = Router()
 
 
@@ -821,7 +825,20 @@ def admin_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📊 Статус", callback_data="admin_status"),
                 InlineKeyboardButton(text="👥 Участники", callback_data="admin_members"),
             ],
-            [InlineKeyboardButton(text="🧹 Отозвать старые ссылки", callback_data="admin_revoke_invites")],
+            [InlineKeyboardButton(text="🔁 Перевести на трибьют (убрать из бота)", callback_data="adm_ask:tribute")],
+            [InlineKeyboardButton(text="✂️ Чистка ошибочных продлений", callback_data="adm_fixbug")],
+            [
+                InlineKeyboardButton(text="🔎 Найти", callback_data="adm_ask:find"),
+                InlineKeyboardButton(text="➕ Добавить", callback_data="adm_ask:add"),
+            ],
+            [
+                InlineKeyboardButton(text="📆 Продлить", callback_data="adm_ask:extend"),
+                InlineKeyboardButton(text="🚪 Удалить", callback_data="adm_ask:remove"),
+            ],
+            [
+                InlineKeyboardButton(text="⛔ Бан", callback_data="adm_ask:ban"),
+                InlineKeyboardButton(text="🧹 Отозвать ссылки", callback_data="admin_revoke_invites"),
+            ],
         ]
     )
 
@@ -1175,6 +1192,7 @@ async def cmd_help(message: Message):
         "/ban @username — чёрный список + бан\n"
         "/revoke_invites — отозвать ссылки, созданные ботом\n"
         "/fix_bug — разовая чистка ошибочно продлённых доступов\n"
+        "/tribute @username — человек оформил Tribute, убрать из базы бота\n"
     )
 
 
@@ -1191,7 +1209,6 @@ BUG_GROUP_A = {
 }
 
 BUG_GROUP_B = {
-    576572018: ("w999w666w", "2026-09-11 07:15:23"),
     608912079: ("stacie_dusk_archive", "2026-09-11 09:13:49"),
     1403697313: ("AlienMorozova", "2026-09-12 00:31:48"),
     1323822987: ("Alla_na_Vibe", "2026-09-12 08:49:41"),
@@ -1295,6 +1312,117 @@ async def on_fix_bug(cb: CallbackQuery, bot: Bot):
     # Сразу запускаем удаление просроченных, не ждём часового цикла.
     await check_expired(bot)
     await cb.message.answer("🚪 Проверка просроченных выполнена. Подробности придут отдельными сообщениями.")
+
+
+@router.message(Command("tribute"))
+async def cmd_tribute(message: Message):
+    """Убирает людей из базы бота: дальше ими управляет Tribute. Из клуба НЕ удаляет."""
+    if not _is_admin(message):
+        return
+    tokens = (message.text or "").replace(",", " ").split()[1:]
+    if not tokens:
+        await message.answer(
+            "Пример: <code>/tribute @username</code>\n"
+            "Можно сразу несколько: <code>/tribute @ник1 @ник2 123456789</code>\n\n"
+            "Бот забудет этих людей и больше не будет их удалять. Из клуба они не пропадут."
+        )
+        return
+
+    removed, missing = [], []
+    for tok in tokens:
+        uid, uname = _parse_target(tok)
+        if uid is None:
+            uid, found = await _lookup_in_db(username=uname)
+            if found:
+                uname = found
+        if uid is None:
+            missing.append(f"@{uname}")
+            continue
+        rec = get_member_record(uid)
+        if not rec:
+            missing.append(f"@{uname or uid}")
+            continue
+        conn = None
+        try:
+            conn = get_db()
+            conn.run("DELETE FROM members WHERE user_id=:uid", uid=uid)
+            removed.append(f"@{rec['username'] or uid}")
+        except Exception as e:  # noqa: BLE001
+            missing.append(f"@{uname or uid} (ошибка базы: {e})")
+        finally:
+            if conn:
+                conn.close()
+
+    text = []
+    if removed:
+        text.append("✅ Теперь за них отвечает Tribute, из базы бота убраны:\n" + "\n".join(removed))
+    if missing:
+        text.append("ℹ️ Не нашла в базе бота (значит, бот и так их не трогает):\n" + "\n".join(missing))
+    await message.answer("\n\n".join(text))
+
+
+ASK_PROMPTS = {
+    "tribute": "Напиши @ники людей, которые оформили подписку через Tribute (можно несколько через пробел). Бот перестанет их контролировать, из клуба они не пропадут.",
+    "find": "Напиши @ник или id человека.",
+    "add": "Напиши @ник (или id) и срок: <code>@ник 30</code> или <code>@ник forever</code>.",
+    "extend": "Напиши @ник и сколько дней добавить: <code>@ник 30</code>.",
+    "remove": "Напиши @ник, которого нужно удалить из клуба.",
+    "ban": "Напиши @ник, которого нужно забанить и внести в чёрный список.",
+}
+
+
+@router.callback_query(F.data.startswith("adm_ask:"))
+async def on_adm_ask(cb: CallbackQuery, state: FSMContext):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    action = cb.data.split(":", 1)[1]
+    if action not in ASK_PROMPTS:
+        await cb.answer("Неизвестное действие", show_alert=True)
+        return
+    await state.update_data(action=action)
+    await state.set_state(AdminAsk.waiting)
+    await cb.message.answer(ASK_PROMPTS[action] + "\n\nОтмена: /cancel")
+    await cb.answer()
+
+
+@router.message(StateFilter(AdminAsk.waiting))
+async def on_adm_answer(message: Message, state: FSMContext, bot: Bot):
+    if not _is_admin(message):
+        return
+    text = (message.text or "").strip()
+    if text.lower().startswith("/cancel"):
+        await state.clear()
+        await message.answer("Отменила.", reply_markup=admin_keyboard())
+        return
+    data = await state.get_data()
+    action = data.get("action")
+    await state.clear()
+
+    fake = message.model_copy(update={"text": f"/{action} {text}"}).as_(bot)
+    if action == "tribute":
+        await cmd_tribute(fake)
+    elif action == "find":
+        await cmd_find(fake, bot)
+    elif action == "add":
+        await cmd_add(fake)
+    elif action == "extend":
+        await cmd_extend(fake)
+    elif action == "remove":
+        await cmd_remove(fake, bot)
+    elif action == "ban":
+        await cmd_ban(fake, bot)
+    else:
+        await message.answer("Не поняла действие, открой /admin заново.")
+
+
+@router.callback_query(F.data == "adm_fixbug")
+async def on_adm_fixbug(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    await cb.answer()
+    await cb.message.answer(_bug_preview_text(), reply_markup=_bug_keyboard())
 
 
 # ---------------------------------------------------------------------------
@@ -1410,6 +1538,7 @@ async def on_startup(bot: Bot):
                 BotCommand(command="ban", description="⛔ Заблокировать"),
                 BotCommand(command="revoke_invites", description="🧹 Сбросить ссылки"),
                 BotCommand(command="fix_bug", description="✂️ Чистка ошибочных продлений"),
+                BotCommand(command="tribute", description="🔁 Перевести на трибьют"),
                 BotCommand(command="help", description="🛠 Все команды"),
             ],
             scope=BotCommandScopeChat(chat_id=ADMIN_ID),
